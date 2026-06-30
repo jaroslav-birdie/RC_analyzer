@@ -23,11 +23,17 @@
 # 26.07.2024    - RC_analyzer calculation of COV corrected by Evon Smyth (University College Dublin, Dublin, Ireland)
 # 
 # 24.09.2024    - all scripts corrected. A deprecated Pydicom function read_file was replaced by dcmread function.
-#               - This prevents any issues with newer Pydicom versions (thanks to Christian Bracco, Mauriziano Hospital, Turin, Italy)
+#               - this prevents any issues with newer Pydicom versions (thanks to Christian Bracco, Mauriziano Hospital, Turin, Italy)
 #
 # 10.06.2025    - Added RC_peak calculation using 3D convolution with a spherical kernel (according to PERCIST methodology and Siemens White Paper)
-#               - Extended GUI and results export to include RC_peak values
-#               - by Anna Kufova (Nemocnice AGEL Novy Jicin, Czech Republic); anna.kufova@nnj.agel.cz
+#               - extended GUI and results export to include RC_peak values
+#               - by Anna Kufova (Nemocnice AGEL Novy Jicin, Czech Republic)
+#
+# 30.06.2026    - CRC calculation added based on Sunderland JJ, J Nucl Med 2025; 00:1–10
+#               - user can switch between RC and CRC results, export includes both metrics
+#               - rotating MIP instead of two stable from different views
+#               - minor bugs corrected
+#               - by Jaroslav Pracek (University Hospital Olomouc, Czech Republic)
 # =============================================================================
 
 import os
@@ -97,7 +103,7 @@ class phantomData:
         self.roi_RC_A_lbl = dict()
         self.roi_RC_peak = dict()
         self.roi_RC_peak_lbl = dict()
-        # CRC (contrast recovery coefficient) dictionaries - Eq.2 (Sunderland et al., J Nucl Med)
+        # CRC (contrast recovery coefficient) dictionaries
         self.roi_CRC_max = dict()
         self.roi_CRC_max_lbl = dict()
         self.roi_CRC_A = dict()
@@ -109,9 +115,7 @@ class phantomData:
         self.mip_to_show = []
         self.thresh = 1
 
-        # rotating MIP (single front view) - precomputed rotation frames (variant B):
-        # the heavy 3D rotation runs once per segmentation on a background thread, the playback
-        # only cycles the ready images so the GUI is never blocked
+        # rotating MIP (single front view) - precomputed rotation frames:
         self.mip_frames = []   # list of PIL images, one per rotation angle
         self.mip_index = 0     # currently displayed rotation frame
         self.mip_n_frames = 24 # number of frames per full 360 deg turn (15 deg step)
@@ -119,7 +123,7 @@ class phantomData:
         # small matrices, decimate larger ones so the background precompute stays fast on big volumes
         inplane = max(self.size[0], self.size[1])
         if inplane >= 400:
-            self.mip_downsample = 4   # e.g. 440x440 -> ~2 s/source
+            self.mip_downsample = 3   # e.g. 440x440
         elif inplane >= 200:
             self.mip_downsample = 2   # e.g. 256x256
         else:
@@ -139,11 +143,9 @@ class phantomData:
         where.create_image(position[0],position[1], anchor='nw', image=self.image_to_show) # this is col x row
 
     def compute_mip_frames(self, of_what):
-        # variant B: build the rotating front-view MIP frames. This is pure numpy/scipy/PIL (no Tkinter),
-        # so it is safe to run on a background thread; only the returned PIL images are handed back.
-        # The volume is rotated about its long axis (z = slices, in-plane axes (0,1)) in mip_n_frames steps;
-        # each rotated volume is summed along axis 0 to give the side/front projection (same view that used to
-        # be the static 'LEFT' MIP at angle 0). order=0 keeps integer labels crisp and is the fastest option.
+        # build the rotating front-view MIP frames
+        # only the returned PIL images are handed back.
+        # the volume is rotated about its long axis (z = slices, in-plane axes (0,1)) in mip_n_frames steps;
         vol = of_what[::self.mip_downsample, ::self.mip_downsample, :] # in-plane downsampling speeds up the rotation
         frames = []
         for k in range(self.mip_n_frames):
@@ -159,7 +161,7 @@ class phantomData:
         return frames
 
     def show_mip_frame(self, where, position, zoom):
-        # draw the currently selected rotation frame into the single MIP canvas (cheap - only a resize + blit)
+        # draw the currently selected rotation frame into the single MIP canvas
         if not self.mip_frames:
             return
         mip = self.mip_frames[self.mip_index % len(self.mip_frames)]
@@ -238,13 +240,12 @@ class phantomData:
 
     def get_bg_for_segmentation(self):
         background = self.roi_position.get('bg')
-        # a valid background must be a flat ((r,c,s),(r,c,s)) pair of two points; bail out (without
-        # crashing) if it was never drawn, got malformed/nested, or is degenerate (zero-size ellipse)
+        # a valid background must be a flat ((r,c,s),(r,c,s)) pair of two points;
         if (self.roi_bg == [0]) or (background is None):
             return
         try:
             p0, p1 = background[0], background[1]
-            if not (np.isscalar(p0[0]) and np.isscalar(p1[0])):  # nested/garbled -> not a flat pair of points
+            if not (np.isscalar(p0[0]) and np.isscalar(p1[0])):  # not a flat pair of points
                 return
             if (p0[0] == p1[0]) or (p0[1] == p1[1]):  # zero-length ellipse axis (single click / straight line)
                 return
@@ -1420,7 +1421,7 @@ class mainWindow:
         self.phantom.show_mip_frame(self.mip_view, self.phantom.mip_position, self.phantom.mask_zoom)
 
     # =============================================================================
-    # rotating MIP animation (variant B) - cycle precomputed frames
+    # rotating MIP animation - cycle precomputed frames
     # =============================================================================
     def spin_step(self):
         if not self.spin_running:
@@ -1432,7 +1433,7 @@ class mainWindow:
         self.spin_after_id = self.master.after(self.spin_interval, self.spin_step)
 
     def rebuild_mip_async(self):
-        # recompute the rotation frames on a background thread so segmenting a source never blocks the GUI.
+        # recompute the rotation frames
         # A generation token lets the newest request win if several segmentations happen in quick succession;
         # while the new frames are being built the previous set keeps spinning.
         self.phantom.mip_build_token += 1
@@ -1442,7 +1443,7 @@ class mainWindow:
         def worker():
             frames = self.phantom.compute_mip_frames(mask)
             if token == self.phantom.mip_build_token: # discard if a newer build superseded this one
-                self.phantom.mip_frames = frames      # list assignment is atomic in CPython
+                self.phantom.mip_frames = frames      # list assignment
                 self.phantom.mip_index = 0
                 self.phantom.mip_ready_token = token
 
