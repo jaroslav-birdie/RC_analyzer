@@ -491,7 +491,7 @@ class phantomData:
             kernel = self.create_spherical_kernel(dx_vox_dim, dy_vox_dim, dz_vox_dim)
             
         # 3. Perform the 3D convolution and cache the resulting map.
-            print("Performing 3D convolution... (This may take a moment)")
+            print("Performing 3D convolution... (This may take a while ...)")
             self.peak_map = convolve(self.data, kernel, mode='same', method='auto')
             print("Peak map has been successfully pre-computed.")
 
