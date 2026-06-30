@@ -94,6 +94,13 @@ class phantomData:
         self.roi_RC_A_lbl = dict()
         self.roi_RC_peak = dict()
         self.roi_RC_peak_lbl = dict()
+        # CRC (contrast recovery coefficient) dictionaries - Eq.2 (Sunderland et al., J Nucl Med)
+        self.roi_CRC_max = dict()
+        self.roi_CRC_max_lbl = dict()
+        self.roi_CRC_A = dict()
+        self.roi_CRC_A_lbl = dict()
+        self.roi_CRC_peak = dict()
+        self.roi_CRC_peak_lbl = dict()
 
         self.image_to_show = []
         self.mip_to_show = []
@@ -462,9 +469,15 @@ class phantomData:
             self.roi_RC_max[which_label] = np.nan
             self.roi_RC_A[which_label] = np.nan
             self.roi_RC_peak[which_label] = np.nan
+            self.roi_CRC_max[which_label] = np.nan
+            self.roi_CRC_A[which_label] = np.nan
+            self.roi_CRC_peak[which_label] = np.nan
             if which_label in self.roi_RC_max_lbl: self.roi_RC_max_lbl[which_label].set("NaN")
             if which_label in self.roi_RC_A_lbl: self.roi_RC_A_lbl[which_label].set("NaN")
             if which_label in self.roi_RC_peak_lbl: self.roi_RC_peak_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_max_lbl: self.roi_CRC_max_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_A_lbl: self.roi_CRC_A_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_peak_lbl: self.roi_CRC_peak_lbl[which_label].set("NaN")
             return
 
     # 2. Basic Metric Calculation 
@@ -505,8 +518,14 @@ class phantomData:
             except Exception as e_ratio:
                 print(f"Error calculating ph_ratio for lesion {which_label}: {e_ratio}")
 
-    # 5. Final RC Calculation 
+    # 5. Final RC and CRC Calculation
+    # RC (recovery coefficient)  = (C_sphere / C_Bkg) / (A_sphere / A_Bkg)
+    # CRC (contrast recovery)    = ((C_sphere - C_Bkg) / C_Bkg) / ((A_sphere - A_Bkg) / A_Bkg)   ... Eq.2
+    #                            = ((C_sphere / C_Bkg) - 1) / (ph_ratio - 1)
+    # with C_sphere = av_max_val / av_A / av_peak, C_Bkg = av_bg and ph_ratio = A_sphere / A_Bkg
         valid_av_bg = isinstance(av_bg, (int, float)) and av_bg != 0
+        # CRC denominator - the known (true) contrast of the phantom filling; ph_ratio == 1 means no contrast
+        crc_denom = ph_ratio - 1 if not np.isnan(ph_ratio) else np.nan
         if np.isnan(ph_ratio) or ph_ratio == 0 or not valid_av_bg:
             self.roi_RC_max[which_label] = np.nan
             self.roi_RC_A[which_label] = np.nan
@@ -516,7 +535,16 @@ class phantomData:
             self.roi_RC_A[which_label] = (av_A / av_bg / ph_ratio)
             self.roi_RC_peak[which_label] = (av_peak / av_bg / ph_ratio) if not np.isnan(av_peak) else np.nan
 
-    # 6. GUI Update 
+        if np.isnan(crc_denom) or crc_denom == 0 or not valid_av_bg:
+            self.roi_CRC_max[which_label] = np.nan
+            self.roi_CRC_A[which_label] = np.nan
+            self.roi_CRC_peak[which_label] = np.nan
+        else:
+            self.roi_CRC_max[which_label] = (av_max_val / av_bg - 1) / crc_denom
+            self.roi_CRC_A[which_label] = (av_A / av_bg - 1) / crc_denom
+            self.roi_CRC_peak[which_label] = ((av_peak / av_bg - 1) / crc_denom) if not np.isnan(av_peak) else np.nan
+
+    # 6. GUI Update
         rc_max_to_display = self.roi_RC_max.get(which_label, np.nan)
         rc_a_to_display = self.roi_RC_A.get(which_label, np.nan)
         rc_peak_to_display = self.roi_RC_peak.get(which_label, np.nan)
@@ -524,6 +552,14 @@ class phantomData:
         if which_label in self.roi_RC_max_lbl: self.roi_RC_max_lbl[which_label].set(f"{rc_max_to_display:.4f}" if not np.isnan(rc_max_to_display) else "NaN")
         if which_label in self.roi_RC_A_lbl: self.roi_RC_A_lbl[which_label].set(f"{rc_a_to_display:.4f}" if not np.isnan(rc_a_to_display) else "NaN")
         if which_label in self.roi_RC_peak_lbl: self.roi_RC_peak_lbl[which_label].set(f"{rc_peak_to_display:.4f}" if not np.isnan(rc_peak_to_display) else "NaN")
+
+        crc_max_to_display = self.roi_CRC_max.get(which_label, np.nan)
+        crc_a_to_display = self.roi_CRC_A.get(which_label, np.nan)
+        crc_peak_to_display = self.roi_CRC_peak.get(which_label, np.nan)
+
+        if which_label in self.roi_CRC_max_lbl: self.roi_CRC_max_lbl[which_label].set(f"{crc_max_to_display:.4f}" if not np.isnan(crc_max_to_display) else "NaN")
+        if which_label in self.roi_CRC_A_lbl: self.roi_CRC_A_lbl[which_label].set(f"{crc_a_to_display:.4f}" if not np.isnan(crc_a_to_display) else "NaN")
+        if which_label in self.roi_CRC_peak_lbl: self.roi_CRC_peak_lbl[which_label].set(f"{crc_peak_to_display:.4f}" if not np.isnan(crc_peak_to_display) else "NaN")
 
     def get_calculations(self):
         # calculate sources activity
@@ -552,38 +588,53 @@ class phantomData:
         return(ph_vol_act_src, ph_vol_act_bg)
 
     def show_me_results(self, where):
-        # data preparation for graph creation - only already segmented ROI
+        # data preparation for graph creation - only the currently selected coefficient family (RC or CRC)
+        mode = RC_analyzer.current_mode()
+        if mode == 'CRC':
+            src_max, src_A, src_peak = self.roi_CRC_max, self.roi_CRC_A, self.roi_CRC_peak
+        else:
+            src_max, src_A, src_peak = self.roi_RC_max, self.roi_RC_A, self.roi_RC_peak
+        lim1, lim2, lim3 = RC_analyzer.active_limits()
+
         obj_diam = np.zeros(self.roi_nr)
-        RC_max = obj_diam.copy()
-        RC_A = obj_diam.copy()
-        RC_peak = obj_diam.copy()
+        v_max = obj_diam.copy()
+        v_A = obj_diam.copy()
+        v_peak = obj_diam.copy()
         # list prints all items in the corresponding dictionary
         for i in list(self.roi_RC_max):
 
             obj_diam[i-1] = self.roi_obj_size[i].get()
-            RC_max[i-1] = self.roi_RC_max[i]
-            RC_A[i-1] = self.roi_RC_A[i]
-            RC_peak[i-1] = self.roi_RC_peak[i]
+            v_max[i-1] = src_max.get(i, 0)
+            v_A[i-1] = src_A.get(i, 0)
+            v_peak[i-1] = src_peak.get(i, 0)
 
-        obj_diam = obj_diam[obj_diam !=0]
-        RC_max = RC_max[RC_max !=0]
-        RC_A = RC_A[RC_A !=0]
-        RC_peak = RC_peak[RC_peak !=0]
+        # keep only segmented lesions; the same diameter mask is used for all three curves
+        seg = obj_diam != 0
+        obj_diam = obj_diam[seg]
+        v_max = v_max[seg]
+        v_A = v_A[seg]
+        v_peak = v_peak[seg]
 
-        GraphRC(where, (RC_analyzer.Xsize, RC_analyzer.Ysize), [0,0], self.seg_thresh, [obj_diam,RC_max],[obj_diam,RC_A], [obj_diam,RC_peak], RC_analyzer.RC[0], RC_analyzer.RC[1], RC_analyzer.RC[2], \
-                RC_analyzer.config, RC_analyzer.RC_limit_max, RC_analyzer.RC_limit_A, RC_analyzer.RC_limit_peak)
+        GraphRC(where, (RC_analyzer.Xsize, RC_analyzer.Ysize), [0,0], self.seg_thresh, \
+                [obj_diam,v_max], [obj_diam,v_A], [obj_diam,v_peak], mode, \
+                RC_analyzer.RC[0], RC_analyzer.RC[1], RC_analyzer.RC[2], \
+                RC_analyzer.config, lim1, lim2, lim3)
 
     def get_out_results(self, file_path):
         # export of results
-        temp = [['A' + str(self.seg_thresh), 'max', 'peak', 'diameter', 'bg_real', 'bg_measured', 'bg_diff(%)', 'bg_COV(%)']]
-        for i in range(1, len(self.roi_RC_A)+1): 
+        temp = [['RC_A' + str(self.seg_thresh), 'RC_max', 'RC_peak', \
+                 'CRC_A' + str(self.seg_thresh), 'CRC_max', 'CRC_peak', \
+                 'diameter', 'bg_real', 'bg_measured', 'bg_diff(%)', 'bg_COV(%)']]
+        for i in range(1, len(self.roi_RC_A)+1):
             try:
-                temp.append([self.roi_RC_A[i], self.roi_RC_max[i], self.roi_RC_peak[i], self.roi_obj_size[i].get()])  
+                temp.append([self.roi_RC_A[i], self.roi_RC_max[i], self.roi_RC_peak[i], \
+                             self.roi_CRC_A[i], self.roi_CRC_max[i], self.roi_CRC_peak[i], \
+                             self.roi_obj_size[i].get()])
             except:
                 tk.messagebox.showwarning("Warning", 'Segmentation of ROI ' + str(i) + ' is missing!')
                 return
 
-        temp.append(['', '', '',  self.ph_vol_act_bg, self.roi_bg_value, self.roi_bg_diff, self.roi_bg_COV])
+        temp.append(['', '', '', '', '', '', self.ph_vol_act_bg, self.roi_bg_value, self.roi_bg_diff, self.roi_bg_COV])
 
         file_name = self.all_setup['device'] + '_' + self.all_setup['study_date'][0:2] + self.all_setup['study_date'][3:5] + \
             self.all_setup['study_date'][6:10] + 'result.csv'
@@ -603,7 +654,8 @@ class phantomData:
 # Graph creation
 # =============================================================================
 class GraphRC:
-    def __init__(self, which_frame, graph_size, graph_position, seg_thresh, graph_RCmax, graph_RCA, graph_RCpeak, RC_max, RC_A, RC_peak, config, RC1, RC2, RC3):
+    def __init__(self, which_frame, graph_size, graph_position, seg_thresh, graph_max, graph_A, graph_peak, mode, RC_max, RC_A, RC_peak, config, RC1, RC2, RC3):
+        # mode = 'RC' or 'CRC' - decides curve titles/labels; only the chosen coefficient family is plotted
 
         fig = Figure(figsize=(graph_size[0]/200, graph_size[1]/(200)), dpi = 200) 
         axs = fig.subplots(3) 
@@ -648,17 +700,18 @@ class GraphRC:
             title_font = {'fontname':'Arial', 'size':'5'}  
             axis_font = {'fontname':'Arial', 'size':'5'} 
             axis_tick = {'labelsize':'4'} 
-            data_line = {'color':'black', 'marker':'o', 'markersize':'2', 'linestyle':'-', 'linewidth':'0.5'} 
-            RC_line = { 'marker':'', 'linestyle':'--', 'linewidth':'1'} 
+            data_line = {'color':'black', 'marker':'o', 'markersize':'2', 'linestyle':'-', 'linewidth':'0.5'}
+            RC_line = { 'marker':'', 'linestyle':'--', 'linewidth':'1'}
 
-            axs[0].plot(graph_RCmax[0],graph_RCmax[1], **data_line)
-            axs[1].plot(graph_RCA[0],graph_RCA[1], **data_line)
-            axs[2].plot(graph_RCpeak[0],graph_RCpeak[1], **data_line)
-            
-            axs[0].set_title('RC_max', y=0.95,  **title_font)    
-            axs[1].set_title('RC_A' + str(seg_thresh), y=0.95, **title_font) 
-            axs[2].set_title('RC_peak', y=0.95, **title_font) 
-            axs[2].set_xlabel('lesion diameter (mm)', **axis_font) 
+            # only the selected coefficient family (RC or CRC) is plotted
+            axs[0].plot(graph_max[0],graph_max[1], **data_line)
+            axs[1].plot(graph_A[0],graph_A[1], **data_line)
+            axs[2].plot(graph_peak[0],graph_peak[1], **data_line)
+
+            axs[0].set_title(mode + '_max', y=0.95,  **title_font)
+            axs[1].set_title(mode + '_A' + str(seg_thresh), y=0.95, **title_font)
+            axs[2].set_title(mode + '_peak', y=0.95, **title_font)
+            axs[2].set_xlabel('lesion diameter (mm)', **axis_font)
 
             if RC_max.get() == 1: # is RC_max limits selected?
                 axs[0].plot(RC1_obj_diam,RC1_low_max, color="red", **RC_line)
@@ -675,8 +728,8 @@ class GraphRC:
 
             for i in range(0, len(axs)):  
                 axs[i].autoscale(enable=True) 
-                axs[i].set_ylabel('RC',**axis_font) 
-                axs[i].tick_params(axis = 'both', **axis_tick) 
+                axs[i].set_ylabel(mode,**axis_font)
+                axs[i].tick_params(axis = 'both', **axis_tick)
                 axs[i].xaxis.set_major_locator(MaxNLocator(integer=True)) 
                 axs[i].xaxis.set_major_formatter(FormatStrFormatter('%.0f')) 
                 axs[i].xaxis.set_minor_locator(AutoMinorLocator()) 
@@ -722,11 +775,18 @@ class mainWindow:
         self.Xsize = (self.Xpix-350)/3 # set the window size according to the desktop resolution x - šířka okna
         self.Ysize = self.Xsize # set the window size according to the desktop resolution y - délka okna
 
-        self.RC = [tk.IntVar(),tk.IntVar(), tk.IntVar()] # setup the RC curve boundaries lists 
-        self.config = [] # preprare for opening the config.cfg file 
+        self.RC = [tk.IntVar(),tk.IntVar(), tk.IntVar()] # setup the RC curve boundaries lists
+        self.config = [] # preprare for opening the config.cfg file
         self.RC_limit_max = tk.StringVar()
         self.RC_limit_A = tk.StringVar()
         self.RC_limit_peak = tk.StringVar()
+        # separate memory for CRC boundary selections - kept empty until the user picks them
+        self.CRC_limit_max = tk.StringVar()
+        self.CRC_limit_A = tk.StringVar()
+        self.CRC_limit_peak = tk.StringVar()
+        # display mode switch (RC vs CRC) - RC selected at startup; the two tick-boxes are mutually exclusive
+        self.disp_RC_var = tk.IntVar(value=1)
+        self.disp_CRC_var = tk.IntVar(value=0)
 
         self.plus = tk.PhotoImage(file = r"plus.png") # open icon files - plusko a minusko pro změnu prahu zobrazení
         self.minus = tk.PhotoImage(file = r"minus.png")
@@ -769,7 +829,7 @@ class mainWindow:
         # frame_c 
         # =============================================================================
         # startovni zobrazeni grafu 
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], ' ',  [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], ' ',  [[],[]], [[],[]], [[],[]], self.current_mode(), self.RC[0], self.RC[1], self.RC[2], self.config, *self.active_limits())
 
 
         # =============================================================================
@@ -801,28 +861,38 @@ class mainWindow:
         button =  tk.Button(self.frame_e, image = self.plus, width="20", height="20", command=lambda where = self.frame_g: self.seg_thresh(1, where)).grid(row=1, column=4)
 
         label = tk.Label(self.frame_e, text='').grid(row=2, column=0, columnspan=4)
-        label = tk.Label(self.frame_e, text='Show RC curve boundaries').grid(row=3, column=0, columnspan=4)
+        label = tk.Label(self.frame_e, text='Show RC / CRC curve boundaries').grid(row=3, column=0, columnspan=6)
 
-        ch_button = tk.Checkbutton(self.frame_e, text = "RC_max", variable = self.RC[0], onvalue = 1, offvalue = 0, command = self.RCs_redraw).grid(row=4, column = 0, columnspan=2)
-        ch_button = tk.Checkbutton(self.frame_e, text = "RC_A50", variable = self.RC[1], onvalue = 1, offvalue = 0, command = self.RCs_redraw).grid(row=4, column = 2, columnspan=2)
-        ch_button = tk.Checkbutton(self.frame_e, text = "RC_peak", variable = self.RC[2], onvalue = 1, offvalue = 0, command = self.RCs_redraw).grid(row=4, column = 4, columnspan=2)
+        # display mode switch - mutually exclusive tick-boxes (RC selected at startup)
+        self.disp_chk_RC = tk.Checkbutton(self.frame_e, text = "RC curve", variable = self.disp_RC_var, onvalue = 1, offvalue = 0, command = lambda: self.display_mode_select('RC'))
+        self.disp_chk_RC.grid(row=4, column = 0, columnspan=3)
+        self.disp_chk_CRC = tk.Checkbutton(self.frame_e, text = "CRC curve", variable = self.disp_CRC_var, onvalue = 1, offvalue = 0, command = lambda: self.display_mode_select('CRC'))
+        self.disp_chk_CRC.grid(row=4, column = 3, columnspan=3)
+
+        # boundary selection check-buttons - labels switch between RC_* and CRC_* with the display mode
+        self.ch_bound_max = tk.Checkbutton(self.frame_e, text = "RC_max", variable = self.RC[0], onvalue = 1, offvalue = 0, command = self.RCs_redraw)
+        self.ch_bound_max.grid(row=5, column = 0, columnspan=2)
+        self.ch_bound_A = tk.Checkbutton(self.frame_e, text = "RC_A50", variable = self.RC[1], onvalue = 1, offvalue = 0, command = self.RCs_redraw)
+        self.ch_bound_A.grid(row=5, column = 2, columnspan=2)
+        self.ch_bound_peak = tk.Checkbutton(self.frame_e, text = "RC_peak", variable = self.RC[2], onvalue = 1, offvalue = 0, command = self.RCs_redraw)
+        self.ch_bound_peak.grid(row=5, column = 4, columnspan=2)
 
         self.RC_limit_spin_max = tk.Spinbox(master=self.frame_e, textvariable=self.RC_limit_max, wrap=True, command = self.RCs_redraw)
-        self.RC_limit_spin_max.grid(row=5, column = 0, columnspan = 2, sticky='w')
+        self.RC_limit_spin_max.grid(row=6, column = 0, columnspan = 2, sticky='w')
         self.RC_limit_spin_A = tk.Spinbox(master=self.frame_e, textvariable=self.RC_limit_A, wrap=True, command = self.RCs_redraw)
-        self.RC_limit_spin_A.grid(row=5, column = 2, columnspan = 2, sticky='w')
+        self.RC_limit_spin_A.grid(row=6, column = 2, columnspan = 2, sticky='w')
         self.RC_limit_spin_peak = tk.Spinbox(master=self.frame_e, textvariable=self.RC_limit_peak, wrap=True, command = self.RCs_redraw)
-        self.RC_limit_spin_peak.grid(row=5, column = 4, columnspan = 2, sticky='w')
+        self.RC_limit_spin_peak.grid(row=6, column = 4, columnspan = 2, sticky='w')
 
 
 
-        label = tk.Label(self.frame_e, text='').grid(row=6, column=0, columnspan=4)
+        label = tk.Label(self.frame_e, text='').grid(row=7, column=0, columnspan=4)
 
         button = tk.Button(self.frame_e, text='IEC Body Phantom', command = lambda: self.roi_character_autofill(self.phantom, 6))
-        button.grid(row=7, column=0, columnspan=5, sticky='nsew')
-        
-        button = tk.Button(self.frame_e, text='IEC_12 Body Phantom', command = lambda: self.roi_character_autofill(self.phantom, 12))
         button.grid(row=8, column=0, columnspan=5, sticky='nsew')
+
+        button = tk.Button(self.frame_e, text='IEC_12 Body Phantom', command = lambda: self.roi_character_autofill(self.phantom, 12))
+        button.grid(row=9, column=0, columnspan=5, sticky='nsew')
 
         # =============================================================================
         # frame_f
@@ -1053,7 +1123,7 @@ class mainWindow:
         self.phantom_slice_lbl['text']= 'slice: '+ str(self.phantom.slice)
 
         # initial graph display
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.current_mode(), self.RC[0], self.RC[1], self.RC[2], self.config, *self.active_limits())
 
         # =============================================================================
         # switching additional frames on
@@ -1106,7 +1176,9 @@ class mainWindow:
         # create a list of rois
         # =============================================================================
         self.roi_character_create(self.phantom.roi_nr, self.frame_g, self.phantom.roi_obj_size, \
-                                  self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                  self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh), self.current_mode())
 
     # =============================================================================
     #  main windows functions section
@@ -1184,7 +1256,9 @@ class mainWindow:
 
         # new roi list generation
         self.roi_character_create(self.phantom.roi_nr, where, self.phantom.roi_obj_size, \
-                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh), self.current_mode())
 
         # new roi popup menu generation
         self.rois_popup_menu = tk.Menu(master = self.frame_a, tearoff=0)
@@ -1221,11 +1295,22 @@ class mainWindow:
         self.phantom.mask = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
         self.phantom.mask_labelled = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
 
+        # the segmentation is invalidated - drop the previous results (the reused StringVars would
+        # otherwise keep displaying stale values) while keeping the entered diameters and background
+        self.phantom.roi_RC_max.clear(); self.phantom.roi_RC_A.clear(); self.phantom.roi_RC_peak.clear()
+        self.phantom.roi_CRC_max.clear(); self.phantom.roi_CRC_A.clear(); self.phantom.roi_CRC_peak.clear()
+        for d in (self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl):
+            for v in d.values():
+                v.set("")
+
         # repeated generation of rois list
         self.roi_character_create(self.phantom.roi_nr, where, self.phantom.roi_obj_size, \
-                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh), self.current_mode())
 
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.current_mode(), self.RC[0], self.RC[1], self.RC[2], self.config, *self.active_limits())
 
     def all_setup_fill(self, dict_to_fill):
         dict_to_fill['sources_activity'] = self.data_srcs_act.get().replace(',','.')
@@ -1254,8 +1339,15 @@ class mainWindow:
         zoom = [event.delta, event.x, event.y]
         self.phantom.mip_zoom(self, self.phantom.mask, zoom, [self.mip_UP_view, self.mip_LEFT_view])
 
-    def roi_character_create(self, how_many, where, roi_size, RC_max_lbl, RC_A_lbl, RC_peak_lbl, bcg_info, thresh):
-        # new rois generation
+    def roi_character_create(self, how_many, where, roi_size, RC_max_lbl, RC_A_lbl, RC_peak_lbl, CRC_max_lbl, CRC_A_lbl, CRC_peak_lbl, bcg_info, thresh, mode='RC'):
+        # only the active coefficient family (mode = 'RC' or 'CRC') is shown; the result StringVars for
+        # BOTH families are always (re)used so get_results can keep both up to date and switching the
+        # display mode never loses already computed values
+        if mode == 'CRC':
+            disp_max_lbl, disp_A_lbl, disp_peak_lbl = CRC_max_lbl, CRC_A_lbl, CRC_peak_lbl
+        else:
+            disp_max_lbl, disp_A_lbl, disp_peak_lbl = RC_max_lbl, RC_A_lbl, RC_peak_lbl
+
         end = how_many+1
         rois = ['empty'] + [str(x) for x in range(1,end)]
         width = 8
@@ -1269,32 +1361,37 @@ class mainWindow:
             else:
                 label = tk.Label(where, text = 'roi ' + rois[r])
                 label.grid(row=r, column=0)
-                roi_size[r] = tk.IntVar()
+                if r not in roi_size:
+                    roi_size[r] = tk.IntVar()
                 roi_character_size = tk.Entry(where, textvariable = roi_size[r], width = width, exportselection = 0)
                 roi_character_size.grid(row=r, column=1)
 
                 label = tk.Label(where, text = ' mm')
                 label.grid(row=r, column=2)
 
-                label = tk.Label(where, text = 'RC_max = ')
+                # make sure result StringVars exist for both families (reused, never overwritten)
+                if r not in RC_max_lbl:
+                    RC_max_lbl[r] = tk.StringVar()
+                    RC_A_lbl[r] = tk.StringVar()
+                    RC_peak_lbl[r] = tk.StringVar()
+                    CRC_max_lbl[r] = tk.StringVar()
+                    CRC_A_lbl[r] = tk.StringVar()
+                    CRC_peak_lbl[r] = tk.StringVar()
+
+                label = tk.Label(where, text = mode + '_max = ')
                 label.grid(row=r, column=3)
-                RC_max_lbl[r] = tk.StringVar()
-                roi_RC_max = tk.Label(where, width = width,textvariable = RC_max_lbl[r])
-                roi_RC_max.grid(row=r, column=4)
+                roi_disp_max = tk.Label(where, width = width, textvariable = disp_max_lbl[r])
+                roi_disp_max.grid(row=r, column=4)
 
-                label = tk.Label(where, text = 'RC_A' + thresh + ' = ')
+                label = tk.Label(where, text = mode + '_A' + thresh + ' = ')
                 label.grid(row=r, column=5)
-                RC_A_lbl[r] = tk.StringVar()
-                roi_RC_A = tk.Label(where, width = width,textvariable = RC_A_lbl[r], anchor='w')
-                roi_RC_A.grid(row=r, column=6)
+                roi_disp_A = tk.Label(where, width = width, textvariable = disp_A_lbl[r], anchor='w')
+                roi_disp_A.grid(row=r, column=6)
 
-                label = tk.Label(where, text = 'RC_peak = ')
+                label = tk.Label(where, text = mode + '_peak = ')
                 label.grid(row=r, column=7)
-                RC_peak_lbl[r] = tk.StringVar()
-                roi_RC_peak = tk.Label(where, width = width,textvariable = RC_peak_lbl[r], anchor='w')
-                roi_RC_peak.grid(row=r, column=8)
-
-                
+                roi_disp_peak = tk.Label(where, width = width, textvariable = disp_peak_lbl[r], anchor='w')
+                roi_disp_peak.grid(row=r, column=8)
 
         background_s = ['background real volume activity: '] + ['background measured volume activity: '] + ['background real / measured difference: '] + ['backgroung COV: ']
         background_e = [' Bq/ml'] + [' Bq/ml'] + [' %'] + [' %']
@@ -1305,9 +1402,10 @@ class mainWindow:
             label = tk.Label(where, text = background_s[r])
             label.grid(row=start+r, column=0, columnspan=4, sticky = 'w')
 
-            bcg_info[r] = tk.StringVar()
-            roi_RC_max = tk.Label(where, width = width, textvariable = bcg_info[r])
-            roi_RC_max.grid(row=start+r, column=4)
+            if r not in bcg_info:
+                bcg_info[r] = tk.StringVar()
+            roi_bcg = tk.Label(where, width = width, textvariable = bcg_info[r])
+            roi_bcg.grid(row=start+r, column=4)
             label = tk.Label(where, text = background_e[r])
             label.grid(row=start+r, column=5)
 
@@ -1404,13 +1502,61 @@ class mainWindow:
     def RCs_redraw(self):
         self.phantom.show_me_results(self.frame_c)
 
+    # =============================================================================
+    # RC / CRC display mode switching
+    # =============================================================================
+    def current_mode(self):
+        # which coefficient family is currently displayed
+        return 'CRC' if self.disp_CRC_var.get() == 1 else 'RC'
+
+    def active_limits(self):
+        # boundary-selection StringVars belonging to the currently displayed family
+        if self.current_mode() == 'CRC':
+            return self.CRC_limit_max, self.CRC_limit_A, self.CRC_limit_peak
+        return self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak
+
+    def display_mode_select(self, mode):
+        # the two tick-boxes are mutually exclusive - force exactly one to stay selected
+        if mode == 'CRC':
+            self.disp_RC_var.set(0)
+            self.disp_CRC_var.set(1)
+        else:
+            self.disp_RC_var.set(1)
+            self.disp_CRC_var.set(0)
+        self.apply_display_mode()
+
+    def apply_display_mode(self):
+        mode = self.current_mode()
+
+        # 1. boundary-selection check-button labels follow the mode (RC_* <-> CRC_*)
+        self.ch_bound_max.config(text = mode + "_max")
+        self.ch_bound_A.config(text = mode + "_A50")
+        self.ch_bound_peak.config(text = mode + "_peak")
+
+        # 2. boundary spin-boxes point to the memorised selection of the active mode
+        #    (CRC selections stay empty until the user picks them, RC selections are kept)
+        lim_max, lim_A, lim_peak = self.active_limits()
+        self.RC_limit_spin_max.config(textvariable = lim_max)
+        self.RC_limit_spin_A.config(textvariable = lim_A)
+        self.RC_limit_spin_peak.config(textvariable = lim_peak)
+
+        # 3./4. rebuild the ROI data labels for the active mode and redraw the graphs
+        if hasattr(self, 'phantom') and self.phantom is not None:
+            for child in self.frame_g.winfo_children():
+                child.destroy()
+            self.roi_character_create(self.phantom.roi_nr, self.frame_g, self.phantom.roi_obj_size, \
+                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                      self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                      self.phantom.roi_bg_info, str(self.phantom.seg_thresh), mode)
+            self.phantom.show_me_results(self.frame_c)
+
     def get_out_results(self):
         self.phantom.get_out_results(self.phantom.directory)
 
     def reset_segmentation(self):
         self.phantom.mask = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
         self.phantom.mask_labelled = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.current_mode(), self.RC[0], self.RC[1], self.RC[2], self.config, *self.active_limits())
         self.phantom.show_me_mip(self.phantom.mask_labelled, [self.mip_UP_view, self.mip_LEFT_view], self.phantom.mip_position, self.phantom.mask_zoom)
 
 #%% global functions

@@ -94,6 +94,13 @@ class phantomData:
         self.roi_RC_A_lbl = dict()
         self.roi_RC_peak = dict()
         self.roi_RC_peak_lbl = dict()
+        # CRC (contrast recovery coefficient) dictionaries - Eq.2 (Sunderland et al., J Nucl Med)
+        self.roi_CRC_max = dict()
+        self.roi_CRC_max_lbl = dict()
+        self.roi_CRC_A = dict()
+        self.roi_CRC_A_lbl = dict()
+        self.roi_CRC_peak = dict()
+        self.roi_CRC_peak_lbl = dict()
 
         self.image_to_show = []
         self.mip_to_show = []
@@ -462,9 +469,15 @@ class phantomData:
             self.roi_RC_max[which_label] = np.nan
             self.roi_RC_A[which_label] = np.nan
             self.roi_RC_peak[which_label] = np.nan
+            self.roi_CRC_max[which_label] = np.nan
+            self.roi_CRC_A[which_label] = np.nan
+            self.roi_CRC_peak[which_label] = np.nan
             if which_label in self.roi_RC_max_lbl: self.roi_RC_max_lbl[which_label].set("NaN")
             if which_label in self.roi_RC_A_lbl: self.roi_RC_A_lbl[which_label].set("NaN")
             if which_label in self.roi_RC_peak_lbl: self.roi_RC_peak_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_max_lbl: self.roi_CRC_max_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_A_lbl: self.roi_CRC_A_lbl[which_label].set("NaN")
+            if which_label in self.roi_CRC_peak_lbl: self.roi_CRC_peak_lbl[which_label].set("NaN")
             return
 
     # 2. Basic Metric Calculation 
@@ -505,8 +518,14 @@ class phantomData:
             except Exception as e_ratio:
                 print(f"Error calculating ph_ratio for lesion {which_label}: {e_ratio}")
 
-    # 5. Final RC Calculation 
+    # 5. Final RC and CRC Calculation
+    # RC (recovery coefficient)  = (C_sphere / C_Bkg) / (A_sphere / A_Bkg)
+    # CRC (contrast recovery)    = ((C_sphere - C_Bkg) / C_Bkg) / ((A_sphere - A_Bkg) / A_Bkg)   ... Eq.2
+    #                            = ((C_sphere / C_Bkg) - 1) / (ph_ratio - 1)
+    # with C_sphere = av_max_val / av_A / av_peak, C_Bkg = av_bg and ph_ratio = A_sphere / A_Bkg
         valid_av_bg = isinstance(av_bg, (int, float)) and av_bg != 0
+        # CRC denominator - the known (true) contrast of the phantom filling; ph_ratio == 1 means no contrast
+        crc_denom = ph_ratio - 1 if not np.isnan(ph_ratio) else np.nan
         if np.isnan(ph_ratio) or ph_ratio == 0 or not valid_av_bg:
             self.roi_RC_max[which_label] = np.nan
             self.roi_RC_A[which_label] = np.nan
@@ -516,7 +535,16 @@ class phantomData:
             self.roi_RC_A[which_label] = (av_A / av_bg / ph_ratio)
             self.roi_RC_peak[which_label] = (av_peak / av_bg / ph_ratio) if not np.isnan(av_peak) else np.nan
 
-    # 6. GUI Update 
+        if np.isnan(crc_denom) or crc_denom == 0 or not valid_av_bg:
+            self.roi_CRC_max[which_label] = np.nan
+            self.roi_CRC_A[which_label] = np.nan
+            self.roi_CRC_peak[which_label] = np.nan
+        else:
+            self.roi_CRC_max[which_label] = (av_max_val / av_bg - 1) / crc_denom
+            self.roi_CRC_A[which_label] = (av_A / av_bg - 1) / crc_denom
+            self.roi_CRC_peak[which_label] = ((av_peak / av_bg - 1) / crc_denom) if not np.isnan(av_peak) else np.nan
+
+    # 6. GUI Update
         rc_max_to_display = self.roi_RC_max.get(which_label, np.nan)
         rc_a_to_display = self.roi_RC_A.get(which_label, np.nan)
         rc_peak_to_display = self.roi_RC_peak.get(which_label, np.nan)
@@ -524,6 +552,14 @@ class phantomData:
         if which_label in self.roi_RC_max_lbl: self.roi_RC_max_lbl[which_label].set(f"{rc_max_to_display:.4f}" if not np.isnan(rc_max_to_display) else "NaN")
         if which_label in self.roi_RC_A_lbl: self.roi_RC_A_lbl[which_label].set(f"{rc_a_to_display:.4f}" if not np.isnan(rc_a_to_display) else "NaN")
         if which_label in self.roi_RC_peak_lbl: self.roi_RC_peak_lbl[which_label].set(f"{rc_peak_to_display:.4f}" if not np.isnan(rc_peak_to_display) else "NaN")
+
+        crc_max_to_display = self.roi_CRC_max.get(which_label, np.nan)
+        crc_a_to_display = self.roi_CRC_A.get(which_label, np.nan)
+        crc_peak_to_display = self.roi_CRC_peak.get(which_label, np.nan)
+
+        if which_label in self.roi_CRC_max_lbl: self.roi_CRC_max_lbl[which_label].set(f"{crc_max_to_display:.4f}" if not np.isnan(crc_max_to_display) else "NaN")
+        if which_label in self.roi_CRC_A_lbl: self.roi_CRC_A_lbl[which_label].set(f"{crc_a_to_display:.4f}" if not np.isnan(crc_a_to_display) else "NaN")
+        if which_label in self.roi_CRC_peak_lbl: self.roi_CRC_peak_lbl[which_label].set(f"{crc_peak_to_display:.4f}" if not np.isnan(crc_peak_to_display) else "NaN")
 
     def get_calculations(self):
         # calculate sources activity
@@ -557,6 +593,9 @@ class phantomData:
         RC_max = obj_diam.copy()
         RC_A = obj_diam.copy()
         RC_peak = obj_diam.copy()
+        CRC_max = obj_diam.copy()
+        CRC_A = obj_diam.copy()
+        CRC_peak = obj_diam.copy()
         # list prints all items in the corresponding dictionary
         for i in list(self.roi_RC_max):
 
@@ -564,26 +603,39 @@ class phantomData:
             RC_max[i-1] = self.roi_RC_max[i]
             RC_A[i-1] = self.roi_RC_A[i]
             RC_peak[i-1] = self.roi_RC_peak[i]
+            CRC_max[i-1] = self.roi_CRC_max.get(i, 0)
+            CRC_A[i-1] = self.roi_CRC_A.get(i, 0)
+            CRC_peak[i-1] = self.roi_CRC_peak.get(i, 0)
 
-        obj_diam = obj_diam[obj_diam !=0]
-        RC_max = RC_max[RC_max !=0]
-        RC_A = RC_A[RC_A !=0]
-        RC_peak = RC_peak[RC_peak !=0]
+        # x-axis (diameters) shared by RC and CRC - keep only segmented lesions
+        seg = obj_diam != 0
+        obj_diam = obj_diam[seg]
+        RC_max = RC_max[seg]
+        RC_A = RC_A[seg]
+        RC_peak = RC_peak[seg]
+        CRC_max = CRC_max[seg]
+        CRC_A = CRC_A[seg]
+        CRC_peak = CRC_peak[seg]
 
-        GraphRC(where, (RC_analyzer.Xsize, RC_analyzer.Ysize), [0,0], self.seg_thresh, [obj_diam,RC_max],[obj_diam,RC_A], [obj_diam,RC_peak], RC_analyzer.RC[0], RC_analyzer.RC[1], RC_analyzer.RC[2], \
+        GraphRC(where, (RC_analyzer.Xsize, RC_analyzer.Ysize), [0,0], self.seg_thresh, [obj_diam,RC_max],[obj_diam,RC_A], [obj_diam,RC_peak], \
+                [obj_diam,CRC_max], [obj_diam,CRC_A], [obj_diam,CRC_peak], RC_analyzer.RC[0], RC_analyzer.RC[1], RC_analyzer.RC[2], \
                 RC_analyzer.config, RC_analyzer.RC_limit_max, RC_analyzer.RC_limit_A, RC_analyzer.RC_limit_peak)
 
     def get_out_results(self, file_path):
         # export of results
-        temp = [['A' + str(self.seg_thresh), 'max', 'peak', 'diameter', 'bg_real', 'bg_measured', 'bg_diff(%)', 'bg_COV(%)']]
-        for i in range(1, len(self.roi_RC_A)+1): 
+        temp = [['RC_A' + str(self.seg_thresh), 'RC_max', 'RC_peak', \
+                 'CRC_A' + str(self.seg_thresh), 'CRC_max', 'CRC_peak', \
+                 'diameter', 'bg_real', 'bg_measured', 'bg_diff(%)', 'bg_COV(%)']]
+        for i in range(1, len(self.roi_RC_A)+1):
             try:
-                temp.append([self.roi_RC_A[i], self.roi_RC_max[i], self.roi_RC_peak[i], self.roi_obj_size[i].get()])  
+                temp.append([self.roi_RC_A[i], self.roi_RC_max[i], self.roi_RC_peak[i], \
+                             self.roi_CRC_A[i], self.roi_CRC_max[i], self.roi_CRC_peak[i], \
+                             self.roi_obj_size[i].get()])
             except:
                 tk.messagebox.showwarning("Warning", 'Segmentation of ROI ' + str(i) + ' is missing!')
                 return
 
-        temp.append(['', '', '',  self.ph_vol_act_bg, self.roi_bg_value, self.roi_bg_diff, self.roi_bg_COV])
+        temp.append(['', '', '', '', '', '', self.ph_vol_act_bg, self.roi_bg_value, self.roi_bg_diff, self.roi_bg_COV])
 
         file_name = self.all_setup['device'] + '_' + self.all_setup['study_date'][0:2] + self.all_setup['study_date'][3:5] + \
             self.all_setup['study_date'][6:10] + 'result.csv'
@@ -603,7 +655,7 @@ class phantomData:
 # Graph creation
 # =============================================================================
 class GraphRC:
-    def __init__(self, which_frame, graph_size, graph_position, seg_thresh, graph_RCmax, graph_RCA, graph_RCpeak, RC_max, RC_A, RC_peak, config, RC1, RC2, RC3):
+    def __init__(self, which_frame, graph_size, graph_position, seg_thresh, graph_RCmax, graph_RCA, graph_RCpeak, graph_CRCmax, graph_CRCA, graph_CRCpeak, RC_max, RC_A, RC_peak, config, RC1, RC2, RC3):
 
         fig = Figure(figsize=(graph_size[0]/200, graph_size[1]/(200)), dpi = 200) 
         axs = fig.subplots(3) 
@@ -648,17 +700,23 @@ class GraphRC:
             title_font = {'fontname':'Arial', 'size':'5'}  
             axis_font = {'fontname':'Arial', 'size':'5'} 
             axis_tick = {'labelsize':'4'} 
-            data_line = {'color':'black', 'marker':'o', 'markersize':'2', 'linestyle':'-', 'linewidth':'0.5'} 
-            RC_line = { 'marker':'', 'linestyle':'--', 'linewidth':'1'} 
+            data_line = {'color':'black', 'marker':'o', 'markersize':'2', 'linestyle':'-', 'linewidth':'0.5'}
+            crc_line = {'color':'blue', 'marker':'s', 'markersize':'2', 'linestyle':'-', 'linewidth':'0.5'}
+            RC_line = { 'marker':'', 'linestyle':'--', 'linewidth':'1'}
 
-            axs[0].plot(graph_RCmax[0],graph_RCmax[1], **data_line)
-            axs[1].plot(graph_RCA[0],graph_RCA[1], **data_line)
-            axs[2].plot(graph_RCpeak[0],graph_RCpeak[1], **data_line)
-            
-            axs[0].set_title('RC_max', y=0.95,  **title_font)    
-            axs[1].set_title('RC_A' + str(seg_thresh), y=0.95, **title_font) 
-            axs[2].set_title('RC_peak', y=0.95, **title_font) 
-            axs[2].set_xlabel('lesion diameter (mm)', **axis_font) 
+            # RC (black circles) and CRC (blue squares) plotted together on the same axes
+            axs[0].plot(graph_RCmax[0],graph_RCmax[1], label='RC', **data_line)
+            axs[1].plot(graph_RCA[0],graph_RCA[1], label='RC', **data_line)
+            axs[2].plot(graph_RCpeak[0],graph_RCpeak[1], label='RC', **data_line)
+
+            axs[0].plot(graph_CRCmax[0],graph_CRCmax[1], label='CRC', **crc_line)
+            axs[1].plot(graph_CRCA[0],graph_CRCA[1], label='CRC', **crc_line)
+            axs[2].plot(graph_CRCpeak[0],graph_CRCpeak[1], label='CRC', **crc_line)
+
+            axs[0].set_title('RC_max / CRC_max', y=0.95,  **title_font)
+            axs[1].set_title('RC_A' + str(seg_thresh) + ' / CRC_A' + str(seg_thresh), y=0.95, **title_font)
+            axs[2].set_title('RC_peak / CRC_peak', y=0.95, **title_font)
+            axs[2].set_xlabel('lesion diameter (mm)', **axis_font)
 
             if RC_max.get() == 1: # is RC_max limits selected?
                 axs[0].plot(RC1_obj_diam,RC1_low_max, color="red", **RC_line)
@@ -675,8 +733,9 @@ class GraphRC:
 
             for i in range(0, len(axs)):  
                 axs[i].autoscale(enable=True) 
-                axs[i].set_ylabel('RC',**axis_font) 
-                axs[i].tick_params(axis = 'both', **axis_tick) 
+                axs[i].set_ylabel('RC / CRC',**axis_font)
+                axs[i].tick_params(axis = 'both', **axis_tick)
+                axs[i].legend(loc='lower right', fontsize=4)
                 axs[i].xaxis.set_major_locator(MaxNLocator(integer=True)) 
                 axs[i].xaxis.set_major_formatter(FormatStrFormatter('%.0f')) 
                 axs[i].xaxis.set_minor_locator(AutoMinorLocator()) 
@@ -769,7 +828,7 @@ class mainWindow:
         # frame_c 
         # =============================================================================
         # startovni zobrazeni grafu 
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], ' ',  [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], ' ',  [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
 
 
         # =============================================================================
@@ -1053,7 +1112,7 @@ class mainWindow:
         self.phantom_slice_lbl['text']= 'slice: '+ str(self.phantom.slice)
 
         # initial graph display
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
 
         # =============================================================================
         # switching additional frames on
@@ -1106,7 +1165,9 @@ class mainWindow:
         # create a list of rois
         # =============================================================================
         self.roi_character_create(self.phantom.roi_nr, self.frame_g, self.phantom.roi_obj_size, \
-                                  self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                  self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
 
     # =============================================================================
     #  main windows functions section
@@ -1184,7 +1245,9 @@ class mainWindow:
 
         # new roi list generation
         self.roi_character_create(self.phantom.roi_nr, where, self.phantom.roi_obj_size, \
-                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
 
         # new roi popup menu generation
         self.rois_popup_menu = tk.Menu(master = self.frame_a, tearoff=0)
@@ -1223,9 +1286,11 @@ class mainWindow:
 
         # repeated generation of rois list
         self.roi_character_create(self.phantom.roi_nr, where, self.phantom.roi_obj_size, \
-                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
+                                      self.phantom.roi_RC_max_lbl, self.phantom.roi_RC_A_lbl, self.phantom.roi_RC_peak_lbl, \
+                                  self.phantom.roi_CRC_max_lbl, self.phantom.roi_CRC_A_lbl, self.phantom.roi_CRC_peak_lbl, \
+                                  self.phantom.roi_bg_info, str(self.phantom.seg_thresh))
 
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
 
     def all_setup_fill(self, dict_to_fill):
         dict_to_fill['sources_activity'] = self.data_srcs_act.get().replace(',','.')
@@ -1254,7 +1319,7 @@ class mainWindow:
         zoom = [event.delta, event.x, event.y]
         self.phantom.mip_zoom(self, self.phantom.mask, zoom, [self.mip_UP_view, self.mip_LEFT_view])
 
-    def roi_character_create(self, how_many, where, roi_size, RC_max_lbl, RC_A_lbl, RC_peak_lbl, bcg_info, thresh):
+    def roi_character_create(self, how_many, where, roi_size, RC_max_lbl, RC_A_lbl, RC_peak_lbl, CRC_max_lbl, CRC_A_lbl, CRC_peak_lbl, bcg_info, thresh):
         # new rois generation
         end = how_many+1
         rois = ['empty'] + [str(x) for x in range(1,end)]
@@ -1294,7 +1359,25 @@ class mainWindow:
                 roi_RC_peak = tk.Label(where, width = width,textvariable = RC_peak_lbl[r], anchor='w')
                 roi_RC_peak.grid(row=r, column=8)
 
-                
+                label = tk.Label(where, text = 'CRC_max = ')
+                label.grid(row=r, column=9)
+                CRC_max_lbl[r] = tk.StringVar()
+                roi_CRC_max = tk.Label(where, width = width,textvariable = CRC_max_lbl[r], anchor='w')
+                roi_CRC_max.grid(row=r, column=10)
+
+                label = tk.Label(where, text = 'CRC_A' + thresh + ' = ')
+                label.grid(row=r, column=11)
+                CRC_A_lbl[r] = tk.StringVar()
+                roi_CRC_A = tk.Label(where, width = width,textvariable = CRC_A_lbl[r], anchor='w')
+                roi_CRC_A.grid(row=r, column=12)
+
+                label = tk.Label(where, text = 'CRC_peak = ')
+                label.grid(row=r, column=13)
+                CRC_peak_lbl[r] = tk.StringVar()
+                roi_CRC_peak = tk.Label(where, width = width,textvariable = CRC_peak_lbl[r], anchor='w')
+                roi_CRC_peak.grid(row=r, column=14)
+
+
 
         background_s = ['background real volume activity: '] + ['background measured volume activity: '] + ['background real / measured difference: '] + ['backgroung COV: ']
         background_e = [' Bq/ml'] + [' Bq/ml'] + [' %'] + [' %']
@@ -1410,7 +1493,7 @@ class mainWindow:
     def reset_segmentation(self):
         self.phantom.mask = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
         self.phantom.mask_labelled = np.zeros([self.phantom.size[0], self.phantom.size[1], self.phantom.size[2]])
-        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
+        GraphRC(self.frame_c, (self.Xsize, self.Ysize), [0,0], self.phantom.seg_thresh, [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], [[],[]], self.RC[0], self.RC[1], self.RC[2], self.config, self.RC_limit_max, self.RC_limit_A, self.RC_limit_peak)
         self.phantom.show_me_mip(self.phantom.mask_labelled, [self.mip_UP_view, self.mip_LEFT_view], self.phantom.mip_position, self.phantom.mask_zoom)
 
 #%% global functions
