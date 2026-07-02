@@ -23,11 +23,20 @@
 # 26.07.2024    - RC_analyzer calculation of COV corrected by Evon Smyth (University College Dublin, Dublin, Ireland)
 # 
 # 24.09.2024    - all scripts corrected. A deprecated Pydicom function read_file was replaced by dcmread function.
-#               - This prevents any issues with newer Pydicom versions (thanks to Christian Bracco, Mauriziano Hospital, Turin, Italy)
+#               - this prevents any issues with newer Pydicom versions (thanks to Christian Bracco, Mauriziano Hospital, Turin, Italy)
 #
 # 10.06.2025    - Added RC_peak calculation using 3D convolution with a spherical kernel (according to PERCIST methodology and Siemens White Paper)
-#               - Extended GUI and results export to include RC_peak values
-#               - by Anna Kufova (Nemocnice AGEL Novy Jicin, Czech Republic); anna.kufova@nnj.agel.cz
+#               - extended GUI and results export to include RC_peak values
+#               - by Anna Kufova (Nemocnice AGEL Novy Jicin, Czech Republic)
+#
+# 30.06.2026    - CRC calculation added based on Sunderland JJ, J Nucl Med 2025; 00:1–10
+#               - user can switch between RC and CRC results, export includes both metrics
+#               - rotating MIP instead of two stable from different views
+#               - minor bugs corrected
+#               - by Jaroslav Pracek (University Hospital Olomouc, Czech Republic)
+#
+# 02.07.2026    - lesion diameters are kept when opening another dataset
+#               - new 'Background position' section: manual entry / recall of the background ROI, export includes its position
 # =============================================================================
 
 import os
@@ -119,7 +128,7 @@ class phantomData:
         # small matrices, decimate larger ones so the background precompute stays fast on big volumes
         inplane = max(self.size[0], self.size[1])
         if inplane >= 400:
-            self.mip_downsample = 4   # e.g. 440x440 -> ~2 s/source
+            self.mip_downsample = 3   # e.g. 440x440
         elif inplane >= 200:
             self.mip_downsample = 2   # e.g. 256x256
         else:
